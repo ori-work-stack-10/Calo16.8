@@ -38,12 +38,14 @@ import {
   ChartBar as BarChart3,
   Check,
 } from "lucide-react-native";
-import { api } from "@/src/services/api";
+import { api, APIError } from "@/src/services/api";
 import { RootState, AppDispatch } from "@/src/store";
 import { fetchMeals } from "../../src/store/mealSlice";
 import { useTranslation } from "react-i18next";
 import { useLanguage } from "@/src/i18n/context/LanguageContext";
 import LoadingScreen from "@/components/LoadingScreen";
+import LoadingSpinner from "@/components/LoadingSpinner";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import XPNotification from "@/components/XPNotification";
 
 // Enable RTL support
@@ -156,6 +158,8 @@ const HomeScreen = React.memo(() => {
   const [pendingWaterRequests, setPendingWaterRequests] = useState(0);
   const [waterSyncErrors, setWaterSyncErrors] = useState<string[]>([]);
   const [waterSyncInProgress, setWaterSyncInProgress] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   // XP Notification State
   const [showXPNotification, setShowXPNotification] = useState(false);
@@ -297,6 +301,7 @@ const HomeScreen = React.memo(() => {
 
       isLoadingRef.current = true;
       setIsDataLoading(true);
+      setDataError(null);
 
       try {
         // Use Promise.allSettled with timeout for better error handling
@@ -311,21 +316,26 @@ const HomeScreen = React.memo(() => {
 
         if (statsResult.status === "rejected") {
           console.error("Stats loading failed:", statsResult.reason);
+          setDataError("Failed to load user statistics");
         }
         if (mealsResult.status === "rejected") {
           console.error("Meals loading failed:", mealsResult.reason);
+          setDataError("Failed to load meals data");
         }
 
         lastDataLoadRef.current = now;
+        setRetryCount(0); // Reset retry count on success
       } catch (error) {
         console.error("💥 Error loading data:", error);
+        setDataError(error instanceof APIError ? error.message : "Failed to load data");
+        setRetryCount(prev => prev + 1);
       } finally {
         setIsDataLoading(false);
         setInitialLoading(false);
         isLoadingRef.current = false;
       }
     },
-    [user?.user_id, loadUserStats, dispatch]
+    [user?.user_id, loadUserStats, dispatch, retryCount]
   );
 
   // Optimized refresh with proper state management
@@ -429,7 +439,9 @@ const HomeScreen = React.memo(() => {
         return;
       }
       console.error("Error syncing water intake:", error);
-      // Don't show sync errors to user - handle silently in background
+      
+      // Add error to sync errors for user feedback
+      setWaterSyncErrors(prev => [...prev, `Sync failed for action ${actionId}`]);
     } finally {
       clearTimeout(timeoutId);
       setWaterSyncInProgress(false);
@@ -642,7 +654,22 @@ const HomeScreen = React.memo(() => {
     );
   }
 
+  // Show error state with retry option
+  if (dataError && retryCount > 0) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{dataError}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => loadAllData(true)}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   return (
+    <ErrorBoundary>
     <SafeAreaView style={styles.container}>
       <StatusBar
         barStyle="light-content"
@@ -1082,6 +1109,7 @@ const HomeScreen = React.memo(() => {
         </View>
       </ScrollView>
     </SafeAreaView>
+    </ErrorBoundary>
   );
 });
 
@@ -1763,5 +1791,29 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "500",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: "#FAFBFC",
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#ef4444",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#10b981",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

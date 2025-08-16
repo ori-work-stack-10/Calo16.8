@@ -20,6 +20,8 @@ import {
 } from "../../src/services/deviceAPI";
 import { HealthData } from "../../src/services/healthKit";
 import LoadingScreen from "@/components/LoadingScreen";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 type DeviceType =
   | "APPLE_HEALTH"
@@ -113,6 +115,7 @@ export default function DevicesScreen() {
   const [connectingDevices, setConnectingDevices] = useState<Set<string>>(
     new Set()
   );
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadDeviceData();
@@ -122,6 +125,7 @@ export default function DevicesScreen() {
     try {
       console.log("📱 Loading device data...");
       setIsLoading(true);
+      setError(null);
 
       // Get connected devices
       const devices = await deviceAPI.getConnectedDevices();
@@ -145,7 +149,7 @@ export default function DevicesScreen() {
       }
     } catch (error) {
       console.error("💥 Failed to load device data:", error);
-      Alert.alert("Error", "Failed to load device data. Please try again.");
+      setError("Failed to load device data. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -203,6 +207,7 @@ export default function DevicesScreen() {
           onPress: async () => {
             console.log("🔄 User pressed Connect for:", deviceType);
             setConnectingDevices((prev) => new Set(prev).add(deviceType));
+            setError(null);
 
             try {
               console.log(
@@ -226,12 +231,7 @@ export default function DevicesScreen() {
               }
             } catch (error) {
               console.error("💥 Connection error:", error);
-              const errorMessage =
-                error instanceof Error ? error.message : "Unknown error";
-              Alert.alert(
-                "Connection Error",
-                `Failed to connect to ${deviceInfo.name}:\n\n${errorMessage}\n\nPlease check your internet connection and try again.`
-              );
+              setError(`Failed to connect to ${deviceInfo.name}. Please try again.`);
             } finally {
               setConnectingDevices((prev) => {
                 const newSet = new Set(prev);
@@ -506,7 +506,24 @@ export default function DevicesScreen() {
     );
   }
 
+  if (error) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => {
+            setError(null);
+            loadDeviceData();
+          }}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   return (
+    <ErrorBoundary>
     <ScrollView
       style={styles.container}
       refreshControl={
@@ -662,6 +679,7 @@ export default function DevicesScreen() {
         </Text>
       </View>
     </ScrollView>
+    </ErrorBoundary>
   );
 }
 
@@ -888,5 +906,29 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: "bold",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: "#f5f5f5",
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#E74C3C",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

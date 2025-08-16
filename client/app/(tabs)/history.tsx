@@ -1,2184 +1,997 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  Image,
-  TextInput,
-  Modal,
-  Alert,
-  ActivityIndicator,
-  RefreshControl,
-  Dimensions,
   ScrollView,
-  Animated,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  RefreshControl,
+  ActivityIndicator,
+  Modal,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { BlurView } from "expo-blur";
-import { useDispatch, useSelector } from "react-redux";
-import { RootState, AppDispatch } from "@/src/store";
-import {
-  fetchMeals,
-  saveMealFeedback,
-  toggleMealFavorite,
-  duplicateMeal,
-  removeMeal,
-} from "@/src/store/mealSlice";
-import { useTranslation } from "react-i18next";
-import { useLanguage } from "@/src/i18n/context/LanguageContext";
-import { useTheme } from "@/src/context/ThemeContext";
 import {
   Search,
   Filter,
-  Heart,
   Star,
   Copy,
+  Edit3,
+  Trash2,
+  Heart,
   Clock,
   Flame,
-  Zap,
-  Droplets,
   Target,
-  TrendingUp,
   ChevronDown,
-  ChevronUp,
   X,
-  Trash2,
-  MoveHorizontal as MoreHorizontal,
-  Camera,
-  Wheat,
-  Apple,
-  Beaker,
-  TreePine,
-  Candy,
-  Dumbbell,
-  Calendar,
-  Award,
-  Activity,
 } from "lucide-react-native";
-import LoadingScreen from "@/components/LoadingScreen";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import Swipeable from "react-native-gesture-handler/Swipeable";
+import { useSelector, useDispatch } from "react-redux";
+import { RootState, AppDispatch } from "@/src/store";
+import { fetchMeals } from "@/src/store/mealSlice";
+import { useTranslation } from "react-i18next";
+import { useLanguage } from "@/src/i18n/context/LanguageContext";
+import { nutritionAPI, APIError } from "@/src/services/api";
+import { useErrorHandler } from "@/hooks/useErrorHandler";
+import { useOptimizedData } from "@/hooks/useOptimizedData";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import LoadingSpinner from "@/components/LoadingSpinner";
+import SkeletonLoader, { SkeletonCard, SkeletonList } from "@/components/SkeletonLoader";
+import OptimizedImage from "@/components/OptimizedImage";
 
 const { width } = Dimensions.get("window");
 
 interface FilterOptions {
   category: string;
   dateRange: string;
-  minCalories: number;
-  maxCalories: number;
+  minCalories: string;
+  maxCalories: string;
+  sortBy: string;
   showFavoritesOnly: boolean;
 }
 
-const CATEGORIES = [
-  { key: "all", label: "All Categories", icon: Target },
-  { key: "high_protein", label: "High Protein", icon: Dumbbell },
-  { key: "high_carb", label: "High Carb", icon: Wheat },
-  { key: "high_fat", label: "High Fat", icon: Droplets },
-  { key: "balanced", label: "Balanced", icon: Activity },
-  { key: "low_calorie", label: "Low Calorie", icon: Flame },
-];
-
-const DATE_RANGES = [
-  { key: "all", label: "All Time", icon: Calendar },
-  { key: "today", label: "Today", icon: Clock },
-  { key: "week", label: "This Week", icon: Calendar },
-  { key: "month", label: "This Month", icon: Calendar },
-];
-
-const NUTRITION_ICONS = {
-  calories: { icon: Flame, name: "Calories", color: "#f59e0b", unit: "kcal" },
-  protein: { icon: Dumbbell, name: "Protein", color: "#3b82f6", unit: "g" },
-  carbs: { icon: Wheat, name: "Carbs", color: "#10b981", unit: "g" },
-  fat: { icon: Droplets, name: "Fat", color: "#ef4444", unit: "g" },
-  fiber: { icon: TreePine, name: "Fiber", color: "#8b5cf6", unit: "g" },
-  sugar: { icon: Candy, name: "Sugar", color: "#f97316", unit: "g" },
-  sodium: { icon: Beaker, name: "Sodium", color: "#6b7280", unit: "mg" },
-};
-
-// Enhanced Swipeable Meal Card Component
-const SwipeableMealCard = ({
-  meal,
-  onDelete,
-  onDuplicate,
-  onToggleFavorite,
-  colors,
-  isDark,
-}: any) => {
-  const dispatch = useDispatch<AppDispatch>();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [savingRatings, setSavingRatings] = useState(false);
-  const [ratings, setRatings] = useState({
-    taste_rating: meal.taste_rating || 0,
-    satiety_rating: meal.satiety_rating || 0,
-    energy_rating: meal.energy_rating || 0,
-    heaviness_rating: meal.heaviness_rating || 0,
-  });
-  const { currentLanguage } = useLanguage();
-  const isRTL = currentLanguage === "he";
-
-  const animatedHeight = useState(new Animated.Value(0))[0];
-
-  useEffect(() => {
-    Animated.timing(animatedHeight, {
-      toValue: isExpanded ? 1 : 0,
-      duration: 300,
-      useNativeDriver: false,
-    }).start();
-  }, [isExpanded]);
-
-  useEffect(() => {
-    setRatings({
-      taste_rating: meal.taste_rating || 0,
-      satiety_rating: meal.satiety_rating || 0,
-      energy_rating: meal.energy_rating || 0,
-      heaviness_rating: meal.heaviness_rating || 0,
-    });
-  }, [
-    meal.taste_rating,
-    meal.satiety_rating,
-    meal.energy_rating,
-    meal.heaviness_rating,
-  ]);
-
-  const handleRatingChange = (key: string, value: number) => {
-    setRatings((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSaveRatings = async () => {
-    try {
-      setSavingRatings(true);
-      const mealId = meal.id || meal.meal_id?.toString();
-      if (!mealId) throw new Error("No meal ID found");
-
-      const result = await dispatch(
-        saveMealFeedback({
-          mealId,
-          feedback: {
-            tasteRating: ratings.taste_rating,
-            satietyRating: ratings.satiety_rating,
-            energyRating: ratings.energy_rating,
-            heavinessRating: ratings.heaviness_rating,
-          },
-        })
-      ).unwrap();
-
-      if (result) {
-        Alert.alert("Success", "Ratings saved successfully!");
-        // Update local meal state immediately
-        meal.taste_rating = ratings.taste_rating;
-        meal.satiety_rating = ratings.satiety_rating;
-        meal.energy_rating = ratings.energy_rating;
-        meal.heaviness_rating = ratings.heaviness_rating;
-
-        // Refresh the meals list
-        await dispatch(fetchMeals());
-      }
-    } catch (error) {
-      console.error("Failed to save ratings:", error);
-      Alert.alert("Error", "Failed to save ratings. Please try again.");
-    } finally {
-      setSavingRatings(false);
-    }
-  };
-
-  const renderLeftActions = () => (
-    <View style={styles.swipeActionContainer}>
-      <TouchableOpacity
-        style={[styles.swipeAction, { backgroundColor: "#10b981" }]}
-        onPress={() => onDuplicate(meal.id || meal.meal_id?.toString())}
-      >
-        <Copy size={24} color="#fff" />
-        <Text style={styles.swipeActionText}>Duplicate</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderRightActions = () => (
-    <View style={styles.swipeActionContainer}>
-      <TouchableOpacity
-        style={[styles.swipeAction, { backgroundColor: "#ef4444" }]}
-        onPress={() => onDelete(meal.id || meal.meal_id?.toString())}
-      >
-        <Trash2 size={24} color="#fff" />
-        <Text style={styles.swipeActionText}>Delete</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderStarRating = (
-    rating: number,
-    onPress: (rating: number) => void
-  ) => {
-    return (
-      <View style={styles.starContainer}>
-        {[1, 2, 3, 4, 5].map((star) => (
-          <TouchableOpacity
-            key={star}
-            onPress={() => onPress(star)}
-            style={styles.starButton}
-            activeOpacity={0.7}
-          >
-            <Star
-              size={20}
-              color={star <= rating ? "#fbbf24" : colors.border}
-              fill={star <= rating ? "#fbbf24" : "transparent"}
-            />
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  };
-
-  const getNutritionValue = (key: string) => {
-    switch (key) {
-      case "calories":
-        return Math.round(meal.calories || 0);
-      case "protein":
-        return Math.round(meal.protein_g || meal.protein || 0);
-      case "carbs":
-        return Math.round(meal.carbs_g || meal.carbs || 0);
-      case "fat":
-        return Math.round(meal.fats_g || meal.fat || 0);
-      case "fiber":
-        return Math.round(meal.fiber_g || meal.fiber || 0);
-      case "sugar":
-        return Math.round(meal.sugar_g || meal.sugar || 0);
-      case "sodium":
-        return Math.round(meal.sodium_mg || meal.sodium || 0);
-      default:
-        return 0;
-    }
-  };
-
-  const getIngredients = () => {
-    if (!meal.ingredients) return [];
-    if (Array.isArray(meal.ingredients)) return meal.ingredients;
-    if (typeof meal.ingredients === "string") {
-      try {
-        return JSON.parse(meal.ingredients);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  const ingredients = getIngredients();
-
-  return (
-    <View style={styles.swipeContainer}>
-      <Swipeable
-        renderLeftActions={renderLeftActions}
-        renderRightActions={renderRightActions}
-        rightThreshold={80}
-        leftThreshold={80}
-      >
-        <View
-          style={[
-            styles.enhancedMealCard,
-            {
-              backgroundColor: colors.card,
-            },
-          ]}
-        >
-          {/* Header Section */}
-          <TouchableOpacity
-            style={styles.cardHeader}
-            onPress={() => setIsExpanded(!isExpanded)}
-            activeOpacity={0.9}
-          >
-            {/* Meal Image */}
-            <View style={styles.imageContainer}>
-              {meal.image_url ? (
-                <Image
-                  source={{ uri: meal.image_url }}
-                  style={styles.mealImageEnhanced}
-                />
-              ) : (
-                <LinearGradient
-                  colors={[colors.primary + "20", colors.primary + "10"]}
-                  style={styles.imagePlaceholder}
-                >
-                  <Camera size={24} color={colors.primary} />
-                </LinearGradient>
-              )}
-
-              {/* Favorite indicator */}
-              {meal.is_favorite && (
-                <View style={styles.favoriteIndicator}>
-                  <Heart size={12} color="#fff" fill="#ef4444" />
-                </View>
-              )}
-            </View>
-
-            {/* Meal Info */}
-            <View style={styles.mealInfo}>
-              <Text
-                style={[styles.mealNameEnhanced, { color: colors.text }]}
-                numberOfLines={1}
-              >
-                {meal.meal_name || meal.name || "Unknown Meal"}
-              </Text>
-
-              <View style={styles.mealMeta}>
-                <View style={styles.metaItem}>
-                  <Clock
-                    size={12}
-                    color={colors.textSecondary || colors.icon}
-                  />
-                  <Text
-                    style={[
-                      styles.metaText,
-                      { color: colors.textSecondary || colors.icon },
-                    ]}
-                  >
-                    {new Date(
-                      meal.created_at || meal.upload_time
-                    ).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </Text>
-                </View>
-
-                {(meal.taste_rating || 0) > 0 && (
-                  <View style={styles.metaItem}>
-                    <Star size={12} color="#fbbf24" fill="#fbbf24" />
-                    <Text
-                      style={[
-                        styles.metaText,
-                        { color: colors.textSecondary || colors.icon },
-                      ]}
-                    >
-                      {meal.taste_rating.toFixed(1)}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Quick nutrition preview */}
-              <View style={styles.nutritionPreview}>
-                {Object.entries(NUTRITION_ICONS)
-                  .slice(0, 3)
-                  .map(([key, config]) => {
-                    const IconComponent = config.icon;
-                    const value = getNutritionValue(key);
-                    return (
-                      <View key={key} style={styles.nutritionPreviewItem}>
-                        <IconComponent size={14} color={config.color} />
-                        <Text
-                          style={[
-                            styles.nutritionPreviewValue,
-                            { color: colors.text },
-                          ]}
-                        >
-                          {value}
-                          {config.unit}
-                        </Text>
-                      </View>
-                    );
-                  })}
-              </View>
-            </View>
-
-            {/* Actions */}
-            <View style={styles.cardActions}>
-              <TouchableOpacity
-                onPress={() =>
-                  onToggleFavorite(meal.id || meal.meal_id?.toString())
-                }
-                style={[styles.actionButton, styles.favoriteAction]}
-                activeOpacity={0.7}
-              >
-                <Heart
-                  size={18}
-                  color={
-                    meal.is_favorite
-                      ? "#fff"
-                      : colors.textSecondary || colors.icon
-                  }
-                  fill={meal.is_favorite ? "#fff" : "transparent"}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  { backgroundColor: colors.border || colors.icon + "20" },
-                ]}
-              >
-                {isExpanded ? (
-                  <ChevronUp size={18} color={colors.text} />
-                ) : (
-                  <ChevronDown size={18} color={colors.text} />
-                )}
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-
-          {/* Expanded Content */}
-          <Animated.View
-            style={[
-              styles.expandedSection,
-              {
-                opacity: animatedHeight,
-                maxHeight: animatedHeight.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, 800],
-                }),
-              },
-            ]}
-          >
-            {isExpanded && (
-              <View style={styles.expandedContent}>
-                {/* Complete Nutrition Grid */}
-                <View style={styles.nutritionSection}>
-                  <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                    Nutrition Information
-                  </Text>
-                  <View style={styles.nutritionGrid}>
-                    {Object.entries(NUTRITION_ICONS).map(([key, config]) => {
-                      const IconComponent = config.icon;
-                      const value = getNutritionValue(key);
-                      return (
-                        <View
-                          key={key}
-                          style={[
-                            styles.nutritionCard,
-                            { backgroundColor: colors.background },
-                          ]}
-                        >
-                          <View style={styles.nutritionCardHeader}>
-                            <View
-                              style={[
-                                styles.nutritionIconContainer,
-                                { backgroundColor: config.color + "15" },
-                              ]}
-                            >
-                              <IconComponent size={16} color={config.color} />
-                            </View>
-                            <Text
-                              style={[
-                                styles.nutritionCardName,
-                                { color: colors.textSecondary || colors.icon },
-                              ]}
-                            >
-                              {config.name}
-                            </Text>
-                          </View>
-                          <Text
-                            style={[
-                              styles.nutritionCardValue,
-                              { color: colors.text },
-                            ]}
-                          >
-                            {value} {config.unit}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                {/* Ingredients Section */}
-                {ingredients && ingredients.length > 0 && (
-                  <View style={styles.ingredientsSection}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                      Ingredients ({ingredients.length})
-                    </Text>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={[
-                        styles.ingredientsScrollContainer,
-                        isRTL && styles.rtlContainer,
-                      ]}
-                    >
-                      {ingredients.map((ingredient: any, index: number) => {
-                        const ingredientName =
-                          typeof ingredient === "string"
-                            ? ingredient
-                            : ingredient.name ||
-                              ingredient.ingredient_name ||
-                              `Ingredient ${index + 1}`;
-
-                        const hasNutrition =
-                          typeof ingredient === "object" &&
-                          (ingredient.calories > 0 ||
-                            ingredient.protein > 0 ||
-                            ingredient.carbs > 0);
-
-                        return (
-                          <View
-                            key={`ingredient-${index}`}
-                            style={[
-                              styles.ingredientChipEnhanced,
-                              {
-                                backgroundColor: colors.primary + "10",
-                                borderColor: colors.primary + "20",
-                              },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.ingredientTextEnhanced,
-                                { color: colors.primary },
-                                isRTL && styles.rtlText,
-                              ]}
-                            >
-                              {ingredientName}
-                            </Text>
-                            {hasNutrition && (
-                              <View style={styles.ingredientNutritionBadge}>
-                                <Text style={styles.ingredientNutritionText}>
-                                  {Math.round(ingredient.calories || 0)} cal
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
-
-                {/* Enhanced Rating Section */}
-                <View style={styles.ratingSection}>
-                  <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                    Rate Your Experience
-                  </Text>
-
-                  <View style={styles.ratingsContainer}>
-                    {[
-                      { key: "taste_rating", label: "Taste", icon: "😋" },
-                      { key: "satiety_rating", label: "Fullness", icon: "🤤" },
-                      { key: "energy_rating", label: "Energy", icon: "⚡" },
-                      {
-                        key: "heaviness_rating",
-                        label: "Heaviness",
-                        icon: "🥱",
-                      },
-                    ].map(({ key, label, icon }) => (
-                      <View
-                        key={key}
-                        style={[
-                          styles.ratingItemEnhanced,
-                          { backgroundColor: colors.background },
-                        ]}
-                      >
-                        <View style={styles.ratingItemHeader}>
-                          <Text style={styles.ratingEmoji}>{icon}</Text>
-                          <Text
-                            style={[
-                              styles.ratingLabelEnhanced,
-                              { color: colors.text },
-                            ]}
-                          >
-                            {label}
-                          </Text>
-                        </View>
-                        {renderStarRating(
-                          ratings[key as keyof typeof ratings],
-                          (rating) => handleRatingChange(key, rating)
-                        )}
-                      </View>
-                    ))}
-                  </View>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.saveButton,
-                      { backgroundColor: colors.primary },
-                    ]}
-                    onPress={handleSaveRatings}
-                    disabled={savingRatings}
-                    activeOpacity={0.8}
-                  >
-                    {savingRatings ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <>
-                        <Award size={18} color="#fff" />
-                        <Text style={styles.saveButtonText}>Save Ratings</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </Animated.View>
-        </View>
-      </Swipeable>
-    </View>
-  );
-};
-
-// Expandable Search Component
-const ExpandableSearch = ({
-  searchQuery,
-  setSearchQuery,
-  colors,
-  onFilterPress,
-}: any) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const searchWidth = useState(new Animated.Value(44))[0];
-  const searchOpacity = useState(new Animated.Value(0))[0];
-
-  const expandSearch = () => {
-    setIsExpanded(true);
-    Animated.parallel([
-      Animated.timing(searchWidth, {
-        toValue: width - 120,
-        duration: 300,
-        useNativeDriver: false,
-      }),
-      Animated.timing(searchOpacity, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: false,
-      }),
-    ]).start();
-  };
-
-  const collapseSearch = () => {
-    if (searchQuery.length === 0) {
-      Animated.parallel([
-        Animated.timing(searchWidth, {
-          toValue: 44,
-          duration: 300,
-          useNativeDriver: false,
-        }),
-        Animated.timing(searchOpacity, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: false,
-        }),
-      ]).start(() => {
-        setIsExpanded(false);
-      });
-    }
-  };
-
-  return (
-    <View style={styles.searchRow}>
-      <Animated.View
-        style={[
-          styles.expandableSearchContainer,
-          {
-            backgroundColor: colors.background,
-            borderColor: colors.border || colors.icon + "20",
-            width: searchWidth,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          onPress={expandSearch}
-          style={styles.searchIconButton}
-          activeOpacity={0.7}
-        >
-          <Search size={18} color={colors.textSecondary || colors.icon} />
-        </TouchableOpacity>
-
-        <Animated.View
-          style={[styles.searchInputContainer, { opacity: searchOpacity }]}
-        >
-          <TextInput
-            style={[styles.expandableSearchInput, { color: colors.text }]}
-            placeholder="Search meals..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholderTextColor={colors.textSecondary || colors.icon}
-            onBlur={collapseSearch}
-            autoFocus={isExpanded}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={() => setSearchQuery("")}
-              style={styles.clearSearchButton}
-              activeOpacity={0.7}
-            >
-              <X size={16} color={colors.textSecondary || colors.icon} />
-            </TouchableOpacity>
-          )}
-        </Animated.View>
-      </Animated.View>
-
-      <TouchableOpacity
-        style={[
-          styles.filterButtonCompact,
-          {
-            backgroundColor: colors.primary + "15",
-            borderColor: colors.primary + "30",
-          },
-        ]}
-        onPress={onFilterPress}
-        activeOpacity={0.8}
-      >
-        <Filter size={18} color={colors.primary} />
-      </TouchableOpacity>
-    </View>
-  );
-};
+interface MealFeedback {
+  tasteRating: number;
+  satietyRating: number;
+  energyRating: number;
+  heavinessRating: number;
+}
 
 export default function HistoryScreen() {
-  // ALL hooks must be called before any conditional logic or early returns
   const { t } = useTranslation();
   const { isRTL } = useLanguage();
   const dispatch = useDispatch<AppDispatch>();
-  const { meals, isLoading } = useSelector((state: RootState) => state.meal);
-  const { colors, isDark } = useTheme();
-
+  const { handleError, handleSuccess } = useErrorHandler();
+  
+  const { meals, isLoading: mealsLoading } = useSelector((state: RootState) => state.meal);
+  
+  // Local state
   const [searchQuery, setSearchQuery] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedMeal, setSelectedMeal] = useState<any>(null);
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateText, setUpdateText] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  
   const [filters, setFilters] = useState<FilterOptions>({
     category: "all",
     dateRange: "all",
-    minCalories: 0,
-    maxCalories: 2000,
+    minCalories: "",
+    maxCalories: "",
+    sortBy: "newest",
     showFavoritesOnly: false,
   });
 
-  useEffect(() => {
-    dispatch(fetchMeals());
-  }, [dispatch]);
+  const [ratings, setRatings] = useState<MealFeedback>({
+    tasteRating: 0,
+    satietyRating: 0,
+    energyRating: 0,
+    heavinessRating: 0,
+  });
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await dispatch(fetchMeals());
-    setRefreshing(false);
-  }, [dispatch]);
-
-  const handleToggleFavorite = useCallback(
-    async (mealId: string) => {
-      try {
-        // Optimistically update the UI
-        const mealToUpdate = meals.find(
-          (m) => (m.id || m.meal_id?.toString()) === mealId
-        );
-        if (mealToUpdate) {
-          mealToUpdate.is_favorite = !mealToUpdate.is_favorite;
-        }
-
-        const result = await dispatch(toggleMealFavorite(mealId)).unwrap();
-
-        if (result) {
-          // Show success feedback
-          Alert.alert(
-            "Success",
-            mealToUpdate?.is_favorite
-              ? "Added to favorites!"
-              : "Removed from favorites!"
-          );
-
-          // Refresh the meals list to ensure consistency
-          await dispatch(fetchMeals());
-        }
-      } catch (error) {
-        console.error("Failed to toggle favorite:", error);
-        // Revert optimistic update on error
-        const mealToRevert = meals.find(
-          (m) => (m.id || m.meal_id?.toString()) === mealId
-        );
-        if (mealToRevert) {
-          mealToRevert.is_favorite = !mealToRevert.is_favorite;
-        }
-        Alert.alert(
-          "Error",
-          "Failed to update favorite status. Please try again."
-        );
-      }
-    },
-    [dispatch, meals]
+  // Optimized data fetching with caching
+  const {
+    data: optimizedMeals,
+    isLoading: dataLoading,
+    error: dataError,
+    refresh: refreshData,
+  } = useOptimizedData(
+    "user-meals",
+    () => nutritionAPI.getMeals(),
+    {
+      ttl: 2 * 60 * 1000, // 2 minutes cache
+      refreshOnFocus: true,
+    }
   );
 
-  const handleDuplicateMeal = useCallback(
-    async (mealId: string) => {
-      try {
-        await dispatch(
-          duplicateMeal({
-            mealId,
-            newDate: new Date().toISOString().split("T")[0],
-          })
-        ).unwrap();
-        Alert.alert("Success", "Meal duplicated successfully!");
-        // Refresh the meals list
-        dispatch(fetchMeals());
-      } catch (error) {
-        console.error("Failed to duplicate meal:", error);
-        Alert.alert("Error", "Failed to duplicate meal");
-      }
-    },
-    [dispatch]
-  );
+  // Use optimized meals if available, fallback to Redux
+  const mealsData = optimizedMeals || meals || [];
 
-  const handleRemoveMeal = useCallback(
-    async (mealId: string) => {
-      Alert.alert("Delete Meal", "Are you sure you want to delete this meal?", [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await dispatch(removeMeal(mealId)).unwrap();
-              Alert.alert("Success", "Meal deleted successfully!");
-              // Refresh the meals list
-              dispatch(fetchMeals());
-            } catch (error) {
-              console.error("Failed to remove meal:", error);
-              Alert.alert("Error", "Failed to remove meal");
-            }
-          },
-        },
-      ]);
-    },
-    [dispatch]
-  );
-
+  // Memoized filtered and sorted meals
   const filteredMeals = useMemo(() => {
-    if (!meals) return [];
+    let filtered = [...mealsData];
 
-    return meals.filter((meal: any) => {
-      // Search filter
-      if (searchQuery.trim() !== "") {
-        const query = searchQuery.toLowerCase();
-        const matchesSearch =
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (meal) =>
           meal.name?.toLowerCase().includes(query) ||
           meal.meal_name?.toLowerCase().includes(query) ||
-          meal.description?.toLowerCase().includes(query);
-        if (!matchesSearch) return false;
-      }
-
-      // Category filter
-      if (filters.category !== "all") {
-        const calories = meal.calories || 0;
-        const protein = meal.protein || meal.protein_g || 0;
-        const carbs = meal.carbs || meal.carbs_g || 0;
-        const fat = meal.fat || meal.fats_g || 0;
-        const total = protein + carbs + fat;
-
-        switch (filters.category) {
-          case "high_protein":
-            if (total === 0 || protein / total < 0.3) return false;
-            break;
-          case "high_carb":
-            if (total === 0 || carbs / total < 0.5) return false;
-            break;
-          case "high_fat":
-            if (total === 0 || fat / total < 0.35) return false;
-            break;
-          case "balanced":
-            if (total === 0) return false;
-            const proteinRatio = protein / total;
-            const carbRatio = carbs / total;
-            const fatRatio = fat / total;
-            if (
-              proteinRatio < 0.2 ||
-              proteinRatio > 0.4 ||
-              carbRatio < 0.3 ||
-              carbRatio > 0.6 ||
-              fatRatio < 0.15 ||
-              fatRatio > 0.4
-            )
-              return false;
-            break;
-          case "low_calorie":
-            if (calories > 300) return false;
-            break;
-        }
-      }
-
-      // Calorie range filter
-      const calories = meal.calories || 0;
-      if (calories < filters.minCalories || calories > filters.maxCalories) {
-        return false;
-      }
-
-      // Favorites filter
-      if (filters.showFavoritesOnly && !meal.is_favorite) {
-        return false;
-      }
-
-      // Date range filter
-      if (filters.dateRange !== "all") {
-        const mealDate = new Date(meal.created_at || meal.upload_time);
-        const now = new Date();
-
-        switch (filters.dateRange) {
-          case "today":
-            if (mealDate.toDateString() !== now.toDateString()) return false;
-            break;
-          case "week":
-            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            if (mealDate < weekAgo) return false;
-            break;
-          case "month":
-            const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            if (mealDate < monthAgo) return false;
-            break;
-        }
-      }
-
-      return true;
-    });
-  }, [meals, searchQuery, filters]);
-
-  const insights = useMemo(() => {
-    if (!filteredMeals.length) return null;
-
-    const totalCalories = filteredMeals.reduce(
-      (sum: number, meal: any) => sum + (meal.calories || 0),
-      0
-    );
-    const avgCalories = Math.round(totalCalories / filteredMeals.length);
-    const favoriteMeals = filteredMeals.filter((meal: any) => meal.is_favorite);
-    const ratedMeals = filteredMeals.filter(
-      (meal: any) => meal.taste_rating && meal.taste_rating > 0
-    );
-    const avgRating =
-      ratedMeals.length > 0
-        ? ratedMeals.reduce(
-            (sum: number, meal: any) => sum + (meal.taste_rating || 0),
-            0
-          ) / ratedMeals.length
-        : 0;
-
-    return {
-      totalMeals: filteredMeals.length,
-      avgCalories,
-      favoriteMeals: favoriteMeals.length,
-      avgRating: Math.round(avgRating * 10) / 10,
-      totalCalories,
-    };
-  }, [filteredMeals]);
-
-  const listData = useMemo(() => {
-    const data = [];
-    if (insights) {
-      data.push({ type: "insights", data: insights });
-    }
-    return data.concat(
-      filteredMeals.map((meal: any) => ({ type: "meal", data: meal }))
-    );
-  }, [filteredMeals, insights]);
-
-  const renderItem = ({ item }: { item: any }) => {
-    if (item.type === "insights") {
-      return (
-        <View
-          style={[
-            styles.insightsCardEnhanced,
-            { backgroundColor: colors.card },
-          ]}
-        >
-          <LinearGradient
-            colors={[colors.primary + "08", colors.primary + "15"]}
-            style={styles.insightsGradientEnhanced}
-          >
-            <View style={styles.insightsHeaderEnhanced}>
-              <View
-                style={[
-                  styles.insightsIconContainer,
-                  { backgroundColor: colors.primary + "20" },
-                ]}
-              >
-                <TrendingUp size={20} color={colors.primary} />
-              </View>
-              <View>
-                <Text
-                  style={[styles.insightsTitleEnhanced, { color: colors.text }]}
-                >
-                  Your Insights
-                </Text>
-                <Text
-                  style={[
-                    styles.insightsSubtitle,
-                    { color: colors.textSecondary || colors.icon },
-                  ]}
-                >
-                  Track your progress
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.insightsGridEnhanced}>
-              <View
-                style={[
-                  styles.insightItemEnhanced,
-                  { backgroundColor: colors.background },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.insightIconBox,
-                    { backgroundColor: colors.primary + "15" },
-                  ]}
-                >
-                  <Target size={16} color={colors.primary} />
-                </View>
-                <Text
-                  style={[styles.insightValueEnhanced, { color: colors.text }]}
-                >
-                  {item.data.totalMeals}
-                </Text>
-                <Text
-                  style={[
-                    styles.insightLabelEnhanced,
-                    { color: colors.textSecondary || colors.icon },
-                  ]}
-                >
-                  Total Meals
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.insightItemEnhanced,
-                  { backgroundColor: colors.background },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.insightIconBox,
-                    { backgroundColor: "#f59e0b15" },
-                  ]}
-                >
-                  <Flame size={16} color="#f59e0b" />
-                </View>
-                <Text
-                  style={[styles.insightValueEnhanced, { color: colors.text }]}
-                >
-                  {item.data.avgCalories}
-                </Text>
-                <Text
-                  style={[
-                    styles.insightLabelEnhanced,
-                    { color: colors.textSecondary || colors.icon },
-                  ]}
-                >
-                  Avg Calories
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.insightItemEnhanced,
-                  { backgroundColor: colors.background },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.insightIconBox,
-                    { backgroundColor: "#ef444415" },
-                  ]}
-                >
-                  <Heart size={16} color="#ef4444" />
-                </View>
-                <Text
-                  style={[styles.insightValueEnhanced, { color: colors.text }]}
-                >
-                  {item.data.favoriteMeals}
-                </Text>
-                <Text
-                  style={[
-                    styles.insightLabelEnhanced,
-                    { color: colors.textSecondary || colors.icon },
-                  ]}
-                >
-                  Favorites
-                </Text>
-              </View>
-
-              <View
-                style={[
-                  styles.insightItemEnhanced,
-                  { backgroundColor: colors.background },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.insightIconBox,
-                    { backgroundColor: "#fbbf2415" },
-                  ]}
-                >
-                  <Star size={16} color="#fbbf24" />
-                </View>
-                <Text
-                  style={[styles.insightValueEnhanced, { color: colors.text }]}
-                >
-                  {item.data.avgRating}
-                </Text>
-                <Text
-                  style={[
-                    styles.insightLabelEnhanced,
-                    { color: colors.textSecondary || colors.icon },
-                  ]}
-                >
-                  Avg Rating
-                </Text>
-              </View>
-            </View>
-          </LinearGradient>
-        </View>
+          meal.description?.toLowerCase().includes(query)
       );
     }
 
-    return (
-      <SwipeableMealCard
-        meal={item.data}
-        onDelete={handleRemoveMeal}
-        onDuplicate={handleDuplicateMeal}
-        onToggleFavorite={handleToggleFavorite}
-        colors={colors}
-        isDark={isDark}
-      />
-    );
-  };
+    // Category filter
+    if (filters.category !== "all") {
+      filtered = filtered.filter((meal) => {
+        const calories = meal.calories || 0;
+        switch (filters.category) {
+          case "high_protein":
+            return (meal.protein || meal.protein_g || 0) > 20;
+          case "high_carb":
+            return (meal.carbs || meal.carbs_g || 0) > 30;
+          case "high_fat":
+            return (meal.fat || meal.fats_g || 0) > 15;
+          case "low_calorie":
+            return calories < 300;
+          case "high_calorie":
+            return calories > 600;
+          default:
+            return true;
+        }
+      });
+    }
 
-  // Only show loading screen if truly loading and no meals exist
-  if (isLoading && !meals.length) {
+    // Calorie range filter
+    if (filters.minCalories) {
+      const min = parseInt(filters.minCalories);
+      filtered = filtered.filter((meal) => (meal.calories || 0) >= min);
+    }
+    if (filters.maxCalories) {
+      const max = parseInt(filters.maxCalories);
+      filtered = filtered.filter((meal) => (meal.calories || 0) <= max);
+    }
+
+    // Favorites filter
+    if (filters.showFavoritesOnly) {
+      filtered = filtered.filter((meal) => meal.isFavorite || meal.is_favorite);
+    }
+
+    // Date range filter
+    if (filters.dateRange !== "all") {
+      const now = new Date();
+      const filterDate = new Date();
+      
+      switch (filters.dateRange) {
+        case "today":
+          filterDate.setHours(0, 0, 0, 0);
+          break;
+        case "week":
+          filterDate.setDate(now.getDate() - 7);
+          break;
+        case "month":
+          filterDate.setMonth(now.getMonth() - 1);
+          break;
+      }
+      
+      filtered = filtered.filter(
+        (meal) => new Date(meal.created_at || meal.upload_time) >= filterDate
+      );
+    }
+
+    // Sort meals
+    filtered.sort((a, b) => {
+      switch (filters.sortBy) {
+        case "newest":
+          return new Date(b.created_at || b.upload_time).getTime() - 
+                 new Date(a.created_at || a.upload_time).getTime();
+        case "oldest":
+          return new Date(a.created_at || a.upload_time).getTime() - 
+                 new Date(b.created_at || b.upload_time).getTime();
+        case "calories_high":
+          return (b.calories || 0) - (a.calories || 0);
+        case "calories_low":
+          return (a.calories || 0) - (b.calories || 0);
+        case "name":
+          return (a.name || a.meal_name || "").localeCompare(b.name || b.meal_name || "");
+        default:
+          return 0;
+      }
+    });
+
+    return filtered;
+  }, [mealsData, searchQuery, filters]);
+
+  // Load meals on component mount
+  useEffect(() => {
+    if (!optimizedMeals && mealsData.length === 0) {
+      dispatch(fetchMeals());
+    }
+  }, [dispatch, optimizedMeals, mealsData.length]);
+
+  // Refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refreshData(),
+        dispatch(fetchMeals()).unwrap(),
+      ]);
+    } catch (error) {
+      handleError(error, "refresh meals");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshData, dispatch, handleError]);
+
+  // Meal actions with optimistic updates
+  const handleToggleFavorite = useCallback(async (meal: any) => {
+    if (actionLoading) return;
+    
+    setActionLoading(`favorite-${meal.id || meal.meal_id}`);
+    
+    try {
+      await nutritionAPI.toggleMealFavorite(meal.id || meal.meal_id.toString());
+      
+      // Optimistic update
+      const updatedMeals = mealsData.map(m => 
+        (m.id || m.meal_id) === (meal.id || meal.meal_id)
+          ? { ...m, isFavorite: !m.isFavorite, is_favorite: !m.is_favorite }
+          : m
+      );
+      
+      // Update cache
+      refreshData();
+      handleSuccess(t("history.favorite_updated"));
+    } catch (error) {
+      handleError(error, "toggle favorite");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [actionLoading, mealsData, refreshData, handleSuccess, handleError, t]);
+
+  const handleDuplicateMeal = useCallback(async (meal: any) => {
+    if (actionLoading) return;
+    
+    Alert.alert(
+      t("history.duplicate_meal"),
+      t("history.duplicate_confirmation"),
+      [
+        { text: t("common.cancel"), style: "cancel" },
+        {
+          text: t("history.duplicate"),
+          onPress: async () => {
+            setActionLoading(`duplicate-${meal.id || meal.meal_id}`);
+            
+            try {
+              await nutritionAPI.duplicateMeal(meal.id || meal.meal_id.toString());
+              await refreshData();
+              dispatch(fetchMeals());
+              handleSuccess(t("history.meal_duplicated"));
+            } catch (error) {
+              handleError(error, "duplicate meal");
+            } finally {
+              setActionLoading(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [actionLoading, refreshData, dispatch, handleSuccess, handleError, t]);
+
+  const handleUpdateMeal = useCallback(async () => {
+    if (!selectedMeal || !updateText.trim() || actionLoading) return;
+    
+    setActionLoading(`update-${selectedMeal.id || selectedMeal.meal_id}`);
+    
+    try {
+      await nutritionAPI.updateMeal(
+        selectedMeal.id || selectedMeal.meal_id.toString(),
+        updateText.trim()
+      );
+      
+      await refreshData();
+      dispatch(fetchMeals());
+      setShowUpdateModal(false);
+      setUpdateText("");
+      setSelectedMeal(null);
+      handleSuccess(t("history.meal_updated"));
+    } catch (error) {
+      handleError(error, "update meal");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [selectedMeal, updateText, actionLoading, refreshData, dispatch, handleSuccess, handleError, t]);
+
+  const handleSaveFeedback = useCallback(async () => {
+    if (!selectedMeal || actionLoading) return;
+    
+    setActionLoading(`feedback-${selectedMeal.id || selectedMeal.meal_id}`);
+    
+    try {
+      await nutritionAPI.saveMealFeedback(
+        selectedMeal.id || selectedMeal.meal_id.toString(),
+        ratings
+      );
+      
+      setShowRatingModal(false);
+      setSelectedMeal(null);
+      setRatings({
+        tasteRating: 0,
+        satietyRating: 0,
+        energyRating: 0,
+        heavinessRating: 0,
+      });
+      handleSuccess(t("history.feedback_saved"));
+    } catch (error) {
+      handleError(error, "save feedback");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [selectedMeal, ratings, actionLoading, handleSuccess, handleError, t]);
+
+  const renderMealCard = useCallback((meal: any, index: number) => {
+    const mealId = meal.id || meal.meal_id;
+    const isActionLoading = actionLoading?.includes(mealId.toString());
+
     return (
-      <LoadingScreen text={isRTL ? "טוען היסטוריה..." : "Loading history..."} />
+      <View key={mealId} style={styles.mealCard}>
+        <View style={styles.mealImageContainer}>
+          <OptimizedImage
+            source={{ uri: meal.image_url || meal.imageUrl }}
+            style={styles.mealImage}
+            fallbackSource={require("@/assets/images/placeholder-meal.png")}
+            showLoader={true}
+            placeholder={<SkeletonLoader width="100%" height="100%" />}
+          />
+        </View>
+
+        <View style={styles.mealInfo}>
+          <Text style={styles.mealName} numberOfLines={2}>
+            {meal.name || meal.meal_name || t("meals.unknown_meal")}
+          </Text>
+          
+          <Text style={styles.mealTime}>
+            {new Date(meal.created_at || meal.upload_time).toLocaleString()}
+          </Text>
+
+          <View style={styles.nutritionRow}>
+            <View style={styles.nutritionItem}>
+              <Flame size={14} color="#ef4444" />
+              <Text style={styles.nutritionText}>
+                {Math.round(meal.calories || 0)} {t("meals.kcal")}
+              </Text>
+            </View>
+            
+            <View style={styles.nutritionItem}>
+              <Target size={14} color="#10b981" />
+              <Text style={styles.nutritionText}>
+                {Math.round(meal.protein || meal.protein_g || 0)}g
+              </Text>
+            </View>
+          </View>
+
+          {/* Rating display */}
+          {(meal.tasteRating || meal.taste_rating) > 0 && (
+            <View style={styles.ratingContainer}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Star
+                  key={i}
+                  size={12}
+                  color={i < (meal.tasteRating || meal.taste_rating) ? "#fbbf24" : "#d1d5db"}
+                  fill={i < (meal.tasteRating || meal.taste_rating) ? "#fbbf24" : "transparent"}
+                />
+              ))}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.mealActions}>
+          {/* Favorite button */}
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              (meal.isFavorite || meal.is_favorite) && styles.favoriteActive,
+            ]}
+            onPress={() => handleToggleFavorite(meal)}
+            disabled={isActionLoading}
+          >
+            {isActionLoading && actionLoading === `favorite-${mealId}` ? (
+              <ActivityIndicator size="small" color="#ef4444" />
+            ) : (
+              <Heart
+                size={16}
+                color={(meal.isFavorite || meal.is_favorite) ? "#ef4444" : "#6b7280"}
+                fill={(meal.isFavorite || meal.is_favorite) ? "#ef4444" : "transparent"}
+              />
+            )}
+          </TouchableOpacity>
+
+          {/* Rate button */}
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => {
+              setSelectedMeal(meal);
+              setRatings({
+                tasteRating: meal.tasteRating || meal.taste_rating || 0,
+                satietyRating: meal.satietyRating || meal.satiety_rating || 0,
+                energyRating: meal.energyRating || meal.energy_rating || 0,
+                heavinessRating: meal.heavinessRating || meal.heaviness_rating || 0,
+              });
+              setShowRatingModal(true);
+            }}
+            disabled={isActionLoading}
+          >
+            <Star size={16} color="#fbbf24" />
+          </TouchableOpacity>
+
+          {/* Duplicate button */}
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => handleDuplicateMeal(meal)}
+            disabled={isActionLoading}
+          >
+            {isActionLoading && actionLoading === `duplicate-${mealId}` ? (
+              <ActivityIndicator size="small" color="#10b981" />
+            ) : (
+              <Copy size={16} color="#10b981" />
+            )}
+          </TouchableOpacity>
+
+          {/* Update button */}
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => {
+              setSelectedMeal(meal);
+              setShowUpdateModal(true);
+            }}
+            disabled={isActionLoading}
+          >
+            <Edit3 size={16} color="#3b82f6" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }, [actionLoading, handleToggleFavorite, handleDuplicateMeal, t]);
+
+  const renderRatingModal = () => (
+    <Modal
+      visible={showRatingModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowRatingModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{t("history.rate_meal")}</Text>
+            <TouchableOpacity onPress={() => setShowRatingModal(false)}>
+              <X size={24} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.ratingSection}>
+            {[
+              { key: "tasteRating", label: t("history.taste") },
+              { key: "satietyRating", label: t("history.satiety") },
+              { key: "energyRating", label: t("history.energy") },
+              { key: "heavinessRating", label: t("history.heaviness") },
+            ].map(({ key, label }) => (
+              <View key={key} style={styles.ratingRow}>
+                <Text style={styles.ratingLabel}>{label}</Text>
+                <View style={styles.starsContainer}>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      onPress={() =>
+                        setRatings((prev) => ({ ...prev, [key]: i + 1 }))
+                      }
+                    >
+                      <Star
+                        size={24}
+                        color={i < ratings[key as keyof MealFeedback] ? "#fbbf24" : "#d1d5db"}
+                        fill={i < ratings[key as keyof MealFeedback] ? "#fbbf24" : "transparent"}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={() => setShowRatingModal(false)}
+            >
+              <Text style={styles.cancelButtonText}>{t("common.cancel")}</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.modalButton, styles.saveButton]}
+              onPress={handleSaveFeedback}
+              disabled={!!actionLoading}
+            >
+              {actionLoading?.includes("feedback") ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={styles.saveButtonText}>{t("common.save")}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderUpdateModal = () => (
+    <Modal
+      visible={showUpdateModal}
+      transparent
+      animationType="slide"
+      onRequestClose={() => setShowUpdateModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{t("history.update_meal")}</Text>
+            <TouchableOpacity onPress={() => setShowUpdateModal(false)}>
+              <X size={24} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          <TextInput
+            style={styles.updateInput}
+            value={updateText}
+            onChangeText={setUpdateText}
+            placeholder={t("history.add_additional_info")}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={() => {
+                setShowUpdateModal(false);
+                setUpdateText("");
+              }}
+            >
+              <Text style={styles.cancelButtonText}>{t("common.cancel")}</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.modalButton,
+                styles.saveButton,
+                !updateText.trim() && styles.disabledButton,
+              ]}
+              onPress={handleUpdateMeal}
+              disabled={!updateText.trim() || !!actionLoading}
+            >
+              {actionLoading?.includes("update") ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={styles.saveButtonText}>{t("common.update")}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderFilters = () => (
+    <View style={styles.filtersContainer}>
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Category:</Text>
+        <TouchableOpacity
+          style={styles.filterDropdown}
+          onPress={() => {
+            // Implement category selector
+          }}
+        >
+          <Text style={styles.filterValue}>
+            {filters.category === "all" ? "All" : filters.category}
+          </Text>
+          <ChevronDown size={16} color="#6b7280" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Sort by:</Text>
+        <TouchableOpacity
+          style={styles.filterDropdown}
+          onPress={() => {
+            // Implement sort selector
+          }}
+        >
+          <Text style={styles.filterValue}>
+            {filters.sortBy === "newest" ? "Newest" : filters.sortBy}
+          </Text>
+          <ChevronDown size={16} color="#6b7280" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  // Loading state
+  if (dataLoading || mealsLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{t("history.title")}</Text>
+        </View>
+        <SkeletonList
+          items={8}
+          renderItem={() => <SkeletonCard />}
+          style={styles.skeletonContainer}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Error state
+  if (dataError) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{dataError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={refreshData}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView
-        style={[styles.container, { backgroundColor: colors.background }]}
-      >
-        {/* Compact Header */}
-        <View style={[styles.headerCompact, { backgroundColor: colors.card }]}>
-          <View style={styles.headerContentCompact}>
-            <Text style={[styles.titleCompact, { color: colors.text }]}>
-              {t("history.title") || "History"}
-            </Text>
+    <ErrorBoundary>
+      <SafeAreaView style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>{t("history.title")}</Text>
+          
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => setShowFilters(!showFilters)}
+          >
+            <Filter size={20} color="#10b981" />
+          </TouchableOpacity>
+        </View>
 
-            <ExpandableSearch
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              colors={colors}
-              onFilterPress={() => setShowFilters(true)}
+        {/* Search */}
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputContainer}>
+            <Search size={20} color="#6b7280" />
+            <TextInput
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t("history.search_meals")}
+              placeholderTextColor="#9ca3af"
             />
           </View>
         </View>
 
-        {/* Content */}
-        {listData.length > 0 ? (
-          <FlatList
-            data={listData}
-            keyExtractor={(item, index) =>
-              item.type === "insights" ? "insights" : index.toString()
-            }
-            renderItem={renderItem}
-            contentContainerStyle={styles.mealsListEnhanced}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={[colors.primary]}
-                tintColor={colors.primary}
-              />
-            }
-          />
-        ) : (
-          <View style={styles.emptyStateEnhanced}>
-            <View
-              style={[
-                styles.emptyStateIcon,
-                { backgroundColor: colors.primary + "15" },
-              ]}
-            >
-              <Clock size={48} color={colors.primary} />
-            </View>
-            <Text style={[styles.emptyTitleEnhanced, { color: colors.text }]}>
-              No meals found
-            </Text>
-            <Text
-              style={[
-                styles.emptyTextEnhanced,
-                { color: colors.textSecondary || colors.icon },
-              ]}
-            >
-              {searchQuery ||
-              filters.category !== "all" ||
-              filters.showFavoritesOnly
-                ? "Try adjusting your search or filters"
-                : "Start logging meals to see your history"}
-            </Text>
-          </View>
-        )}
+        {/* Filters */}
+        {showFilters && renderFilters()}
 
-        {/* Enhanced Filter Modal */}
-        <Modal
-          visible={showFilters}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setShowFilters(false)}
+        {/* Meals List */}
+        <ScrollView
+          style={styles.mealsContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#10b981"]}
+              tintColor="#10b981"
+            />
+          }
+          showsVerticalScrollIndicator={false}
         >
-          <BlurView intensity={20} style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.filterModalEnhanced,
-                { backgroundColor: colors.card },
-              ]}
-            >
-              <View
-                style={[
-                  styles.modalHeaderEnhanced,
-                  { borderBottomColor: colors.border || colors.icon + "20" },
-                ]}
-              >
-                <View>
-                  <Text
-                    style={[styles.modalTitleEnhanced, { color: colors.text }]}
-                  >
-                    Filter & Sort
-                  </Text>
-                  <Text
-                    style={[
-                      styles.modalSubtitle,
-                      { color: colors.textSecondary || colors.icon },
-                    ]}
-                  >
-                    Customize your meal view
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setShowFilters(false)}
-                  style={[
-                    styles.closeButton,
-                    { backgroundColor: colors.border || colors.icon + "20" },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <X size={20} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                style={styles.filterContentEnhanced}
-                showsVerticalScrollIndicator={false}
-              >
-                {/* Category Filter */}
-                <View style={styles.filterSectionEnhanced}>
-                  <Text
-                    style={[
-                      styles.filterSectionTitleEnhanced,
-                      { color: colors.text },
-                    ]}
-                  >
-                    Category
-                  </Text>
-                  <View style={styles.categoryGridEnhanced}>
-                    {CATEGORIES.map((category) => {
-                      const IconComponent = category.icon;
-                      const isSelected = filters.category === category.key;
-                      return (
-                        <TouchableOpacity
-                          key={category.key}
-                          style={[
-                            styles.categoryChipEnhanced,
-                            {
-                              backgroundColor: isSelected
-                                ? colors.primary + "15"
-                                : colors.background,
-                              borderColor: isSelected
-                                ? colors.primary
-                                : colors.border || colors.icon + "20",
-                            },
-                          ]}
-                          onPress={() =>
-                            setFilters((prev) => ({
-                              ...prev,
-                              category: category.key,
-                            }))
-                          }
-                          activeOpacity={0.8}
-                        >
-                          <IconComponent
-                            size={16}
-                            color={isSelected ? colors.primary : colors.text}
-                          />
-                          <Text
-                            style={[
-                              styles.categoryChipTextEnhanced,
-                              {
-                                color: isSelected
-                                  ? colors.primary
-                                  : colors.text,
-                              },
-                            ]}
-                          >
-                            {category.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                {/* Date Range Filter */}
-                <View style={styles.filterSectionEnhanced}>
-                  <Text
-                    style={[
-                      styles.filterSectionTitleEnhanced,
-                      { color: colors.text },
-                    ]}
-                  >
-                    Time Period
-                  </Text>
-                  <View style={styles.dateRangeGridEnhanced}>
-                    {DATE_RANGES.map((range) => {
-                      const IconComponent = range.icon;
-                      const isSelected = filters.dateRange === range.key;
-                      return (
-                        <TouchableOpacity
-                          key={range.key}
-                          style={[
-                            styles.dateRangeChipEnhanced,
-                            {
-                              backgroundColor: isSelected
-                                ? colors.primary + "15"
-                                : colors.background,
-                              borderColor: isSelected
-                                ? colors.primary
-                                : colors.border || colors.icon + "20",
-                            },
-                          ]}
-                          onPress={() =>
-                            setFilters((prev) => ({
-                              ...prev,
-                              dateRange: range.key,
-                            }))
-                          }
-                          activeOpacity={0.8}
-                        >
-                          <IconComponent
-                            size={16}
-                            color={isSelected ? colors.primary : colors.text}
-                          />
-                          <Text
-                            style={[
-                              styles.dateRangeChipTextEnhanced,
-                              {
-                                color: isSelected
-                                  ? colors.primary
-                                  : colors.text,
-                              },
-                            ]}
-                          >
-                            {range.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                {/* Favorites Toggle */}
-                <View style={styles.filterSectionEnhanced}>
-                  <TouchableOpacity
-                    style={[
-                      styles.favoritesToggleEnhanced,
-                      {
-                        backgroundColor: colors.background,
-                        borderColor: filters.showFavoritesOnly
-                          ? colors.primary
-                          : colors.border || colors.icon + "20",
-                      },
-                    ]}
-                    onPress={() =>
-                      setFilters((prev) => ({
-                        ...prev,
-                        showFavoritesOnly: !prev.showFavoritesOnly,
-                      }))
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.toggleLeft}>
-                      <Heart
-                        size={18}
-                        color={
-                          filters.showFavoritesOnly
-                            ? "#ef4444"
-                            : colors.textSecondary || colors.icon
-                        }
-                        fill={
-                          filters.showFavoritesOnly ? "#ef4444" : "transparent"
-                        }
-                      />
-                      <View>
-                        <Text
-                          style={[
-                            styles.favoritesToggleTextEnhanced,
-                            { color: colors.text },
-                          ]}
-                        >
-                          Show Favorites Only
-                        </Text>
-                        <Text
-                          style={[
-                            styles.toggleSubtext,
-                            { color: colors.textSecondary || colors.icon },
-                          ]}
-                        >
-                          Filter by your favorite meals
-                        </Text>
-                      </View>
-                    </View>
-                    <View
-                      style={[
-                        styles.toggleSwitch,
-                        {
-                          backgroundColor: filters.showFavoritesOnly
-                            ? colors.primary
-                            : colors.border || colors.icon + "20",
-                        },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.toggleSwitchThumb,
-                          {
-                            backgroundColor: "#fff",
-                            transform: [
-                              {
-                                translateX: filters.showFavoritesOnly ? 18 : 2,
-                              },
-                            ],
-                          },
-                        ]}
-                      />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Action Buttons */}
-                <View style={styles.modalActions}>
-                  <TouchableOpacity
-                    style={[
-                      styles.resetButtonEnhanced,
-                      {
-                        backgroundColor: colors.background,
-                        borderColor: colors.border || colors.icon + "20",
-                      },
-                    ]}
-                    onPress={() =>
-                      setFilters({
-                        category: "all",
-                        dateRange: "all",
-                        minCalories: 0,
-                        maxCalories: 2000,
-                        showFavoritesOnly: false,
-                      })
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[styles.resetButtonText, { color: colors.text }]}
-                    >
-                      Reset
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.applyButtonEnhanced,
-                      { backgroundColor: colors.primary },
-                    ]}
-                    onPress={() => setShowFilters(false)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.applyButtonText}>Apply Filters</Text>
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
+          {filteredMeals.length > 0 ? (
+            filteredMeals.map(renderMealCard)
+          ) : (
+            <View style={styles.emptyState}>
+              <Clock size={48} color="#d1d5db" />
+              <Text style={styles.emptyTitle}>
+                {searchQuery ? "No meals found" : t("history.no_meals")}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {searchQuery
+                  ? "Try adjusting your search or filters"
+                  : t("history.start_logging")}
+              </Text>
             </View>
-          </BlurView>
-        </Modal>
+          )}
+        </ScrollView>
+
+        {/* Modals */}
+        {renderRatingModal()}
+        {renderUpdateModal()}
       </SafeAreaView>
-    </GestureHandlerRootView>
+    </ErrorBoundary>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#f8fafc",
   },
-
-  // Compact Header Styles
-  headerCompact: {
-    paddingTop: 8,
-    paddingBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-
-  headerContentCompact: {
+  header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-
-  titleCompact: {
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-  },
-
-  // Expandable Search Styles
-  searchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-
-  expandableSearchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    paddingHorizontal: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-
-  searchIconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  searchInputContainer: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingRight: 12,
-  },
-
-  expandableSearchInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "500",
-    paddingLeft: 8,
-  },
-
-  clearSearchButton: {
-    padding: 4,
-  },
-
-  filterButtonCompact: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-
-  // Swipe Container Styles
-  swipeContainer: {
-    marginHorizontal: 20,
-    marginVertical: 8,
-    position: "relative",
-  },
-
-  swipeActionContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  swipeAction: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    minWidth: "100%",
-  },
-
-  swipeActionText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 4,
-  },
-
-  // Enhanced Insights Card
-  insightsCardEnhanced: {
-    marginHorizontal: 20,
-    marginVertical: 12,
-    borderRadius: 20,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-
-  insightsGradientEnhanced: {
-    padding: 20,
-  },
-
-  insightsHeaderEnhanced: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-    gap: 12,
-  },
-
-  insightsIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  insightsTitleEnhanced: {
-    fontSize: 18,
-    fontWeight: "700",
-  },
-
-  insightsSubtitle: {
-    fontSize: 12,
-    opacity: 0.8,
-    marginTop: 2,
-  },
-
-  insightsGridEnhanced: {
-    flexDirection: "row",
-    gap: 12,
-  },
-
-  insightItemEnhanced: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-
-  insightIconBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-
-  insightValueEnhanced: {
-    fontSize: 20,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-
-  insightLabelEnhanced: {
-    fontSize: 11,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-
-  // Enhanced Meal Card
-  enhancedMealCard: {
-    borderRadius: 20,
-    overflow: "hidden",
-  },
-
-  cardHeader: {
-    flexDirection: "row",
-    padding: 16,
-    alignItems: "center",
-  },
-
-  imageContainer: {
-    position: "relative",
-    marginRight: 16,
-  },
-
-  mealImageEnhanced: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-  },
-
-  imagePlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  favoriteIndicator: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#ef4444",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#ef4444",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-
-  mealInfo: {
-    flex: 1,
-  },
-
-  mealNameEnhanced: {
-    fontSize: 17,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-
-  mealMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 12,
-  },
-
-  metaItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-
-  metaText: {
-    fontSize: 12,
-    fontWeight: "500",
-  },
-
-  nutritionPreview: {
-    flexDirection: "row",
-    gap: 16,
-  },
-
-  nutritionPreviewItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-
-  nutritionPreviewValue: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  cardActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-
-  actionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  favoriteAction: {
-    backgroundColor: "#ef444420",
-  },
-
-  // Expanded Content
-  expandedSection: {
-    overflow: "hidden",
-  },
-
-  expandedContent: {
-    padding: 16,
-    paddingTop: 0,
-  },
-
-  nutritionSection: {
-    marginBottom: 20,
-  },
-
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
-
-  nutritionGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-
-  nutritionCard: {
-    flex: 1,
-    minWidth: "30%",
-    padding: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-
-  nutritionCardHeader: {
-    alignItems: "center",
-    marginBottom: 8,
-  },
-
-  nutritionIconContainer: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-
-  nutritionCardName: {
-    fontSize: 10,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-
-  nutritionCardValue: {
-    fontSize: 14,
-    fontWeight: "800",
-  },
-
-  // Ingredients
-  ingredientsSection: {
-    marginBottom: 20,
-  },
-
-  ingredientsScrollContainer: {
-    paddingRight: 16,
-    gap: 8,
-  },
-
-  rtlContainer: {
-    flexDirection: "row-reverse",
-    paddingLeft: 16,
-    paddingRight: 0,
-  },
-
-  rtlText: {
-    textAlign: "right",
-  },
-
-  ingredientChipEnhanced: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-
-  ingredientTextEnhanced: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  ingredientNutritionBadge: {
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    marginTop: 4,
-  },
-
-  ingredientNutritionText: {
-    fontSize: 10,
-    color: "#059669",
-    fontWeight: "600",
-  },
-
-  // Ratings
-  ratingSection: {
-    marginBottom: 20,
-  },
-
-  ratingsContainer: {
-    gap: 12,
-    marginBottom: 16,
-  },
-
-  ratingItemEnhanced: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    borderRadius: 12,
-  },
-
-  ratingItemHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-
-  ratingEmoji: {
-    fontSize: 20,
-  },
-
-  ratingLabelEnhanced: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  starContainer: {
-    flexDirection: "row",
-    gap: 4,
-  },
-
-  starButton: {
-    padding: 4,
-  },
-
-  saveButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 14,
-    gap: 8,
-  },
-
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-
-  // Lists
-  mealsListEnhanced: {
-    paddingBottom: 24,
-  },
-
-  // Empty State
-  emptyStateEnhanced: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 40,
-  },
-
-  emptyStateIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-
-  emptyTitleEnhanced: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-
-  emptyTextEnhanced: {
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-    maxWidth: 280,
-  },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-
-  filterModalEnhanced: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: "85%",
-  },
-
-  modalHeaderEnhanced: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 20,
+    paddingVertical: 16,
+    backgroundColor: "#ffffff",
     borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
   },
-
-  modalTitleEnhanced: {
-    fontSize: 20,
-    fontWeight: "800",
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#1f2937",
   },
-
-  modalSubtitle: {
-    fontSize: 12,
-    marginTop: 2,
-    opacity: 0.8,
+  filterButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
   },
-
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
+  searchContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: "#ffffff",
   },
-
-  filterContentEnhanced: {
-    padding: 20,
-  },
-
-  filterSectionEnhanced: {
-    marginBottom: 24,
-  },
-
-  filterSectionTitleEnhanced: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
-
-  categoryGridEnhanced: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-
-  categoryChipEnhanced: {
+  searchInputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: "#f9fafb",
     borderRadius: 12,
-    borderWidth: 1,
-    gap: 6,
-  },
-
-  categoryChipTextEnhanced: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  dateRangeGridEnhanced: {
-    gap: 8,
-  },
-
-  dateRangeChipEnhanced: {
-    flexDirection: "row",
-    alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 8,
+    gap: 12,
   },
-
-  dateRangeChipTextEnhanced: {
-    fontSize: 14,
-    fontWeight: "600",
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: "#374151",
   },
-
-  favoritesToggleEnhanced: {
+  filtersContainer: {
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  filterRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
+    marginBottom: 12,
   },
-
-  toggleLeft: {
+  filterLabel: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#374151",
+  },
+  filterDropdown: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    flex: 1,
+    backgroundColor: "#f9fafb",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 8,
   },
-
-  favoritesToggleTextEnhanced: {
+  filterValue: {
     fontSize: 14,
-    fontWeight: "600",
+    color: "#6b7280",
   },
-
-  toggleSubtext: {
-    fontSize: 11,
-    marginTop: 2,
+  mealsContainer: {
+    flex: 1,
+    paddingHorizontal: 20,
   },
-
-  toggleSwitch: {
-    width: 44,
-    height: 24,
+  mealCard: {
+    flexDirection: "row",
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  mealImageContainer: {
+    width: 80,
+    height: 80,
     borderRadius: 12,
-    padding: 2,
+    overflow: "hidden",
+    marginRight: 16,
+  },
+  mealImage: {
+    width: "100%",
+    height: "100%",
+  },
+  mealInfo: {
+    flex: 1,
+    justifyContent: "space-between",
+  },
+  mealName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1f2937",
+    marginBottom: 4,
+  },
+  mealTime: {
+    fontSize: 12,
+    color: "#6b7280",
+    marginBottom: 8,
+  },
+  nutritionRow: {
+    flexDirection: "row",
+    gap: 16,
+    marginBottom: 8,
+  },
+  nutritionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  nutritionText: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "500",
+  },
+  ratingContainer: {
+    flexDirection: "row",
+    gap: 2,
+  },
+  mealActions: {
+    justifyContent: "space-around",
+    alignItems: "center",
+    gap: 8,
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: "#f9fafb",
+  },
+  favoriteActive: {
+    backgroundColor: "#fef2f2",
+  },
+  emptyState: {
+    alignItems: "center",
     justifyContent: "center",
+    paddingVertical: 60,
   },
-
-  toggleSwitchThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#374151",
+    marginTop: 16,
+    marginBottom: 8,
   },
-
+  emptySubtitle: {
+    fontSize: 14,
+    color: "#6b7280",
+    textAlign: "center",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    padding: 24,
+    width: width - 40,
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#1f2937",
+  },
+  ratingSection: {
+    gap: 16,
+    marginBottom: 24,
+  },
+  ratingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  ratingLabel: {
+    fontSize: 16,
+    color: "#374151",
+    fontWeight: "500",
+  },
+  starsContainer: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  updateInput: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: "#374151",
+    minHeight: 100,
+    marginBottom: 24,
+  },
   modalActions: {
     flexDirection: "row",
     gap: 12,
-    marginTop: 12,
   },
-
-  resetButtonEnhanced: {
+  modalButton: {
     flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderRadius: 12,
     alignItems: "center",
-    borderWidth: 1,
   },
-
-  resetButtonText: {
-    fontSize: 14,
+  cancelButton: {
+    backgroundColor: "#f3f4f6",
+  },
+  saveButton: {
+    backgroundColor: "#10b981",
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  cancelButtonText: {
+    fontSize: 16,
     fontWeight: "600",
+    color: "#6b7280",
   },
-
-  applyButtonEnhanced: {
-    flex: 2,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#ffffff",
+  },
+  skeletonContainer: {
+    padding: 20,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
     alignItems: "center",
+    padding: 20,
   },
-
-  applyButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
+  errorText: {
+    fontSize: 16,
+    color: "#ef4444",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#10b981",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

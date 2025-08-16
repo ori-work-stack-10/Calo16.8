@@ -33,6 +33,8 @@ import { useLanguage } from "@/src/i18n/context/LanguageContext";
 import { chatAPI, questionnaireAPI } from "@/src/services/api";
 import i18n from "@/src/i18n";
 import LoadingScreen from "@/components/LoadingScreen";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 const { width } = Dimensions.get("window");
 
@@ -66,6 +68,8 @@ export default function AIChatScreen() {
     goals: [],
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const scrollViewRef = useRef<ScrollView>(null);
   const isRTL = i18n.language === "he";
   const texts = {
@@ -110,6 +114,7 @@ export default function AIChatScreen() {
 
   const loadUserProfile = async () => {
     try {
+      setError(null);
       console.log("🔄 Loading user profile from questionnaire...");
       const response = await questionnaireAPI.getQuestionnaire();
 
@@ -134,11 +139,14 @@ export default function AIChatScreen() {
 
         setUserProfile(profile);
         console.log("✅ User profile loaded:", profile);
+        setRetryCount(0);
       } else {
         console.log("⚠️ No questionnaire data found, using empty profile");
       }
     } catch (error) {
       console.error("💥 Error loading user profile:", error);
+      setError("Failed to load user profile");
+      setRetryCount(prev => prev + 1);
     } finally {
       setIsLoading(false);
     }
@@ -190,6 +198,7 @@ export default function AIChatScreen() {
       }
     } catch (error) {
       console.error("💥 Error loading chat history:", error);
+      setError("Failed to load chat history");
       // Show welcome message on error
       setMessages([
         {
@@ -296,6 +305,7 @@ export default function AIChatScreen() {
     const currentMessage = inputText.trim();
     setInputText("");
     setIsTyping(true);
+    setError(null);
 
     try {
       console.log("💬 Sending message to AI:", currentMessage);
@@ -354,21 +364,23 @@ export default function AIChatScreen() {
     } catch (error) {
       console.error("💥 Error sending message:", error);
 
+      const errorMessage = error instanceof APIError 
+        ? error.message 
+        : "Sorry, there was an error communicating with the server. Please try again.";
+
       // Add error message
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         type: "bot",
-        content:
-          language === "he"
-            ? "מצטער, אירעה שגיאה בתקשורת עם השרת. אנא נסה שוב."
-            : "Sorry, there was an error communicating with the server. Please try again.",
+        content: language === "he"
+          ? "מצטער, אירעה שגיאה בתקשורת עם השרת. אנא נסה שוב."
+          : errorMessage,
         timestamp: new Date(),
         hasWarning: true,
       };
 
       setMessages((prev) => [...prev, errorMessage]);
-
-      Alert.alert(texts.error, texts.networkError);
+      setError(errorMessage);
     } finally {
       setIsTyping(false);
     }
@@ -490,11 +502,30 @@ export default function AIChatScreen() {
 
   if (isLoading) {
     return (
-      <LoadingScreen text={isRTL ? "טוען בינה מלכותית" : "Loading AI..."} />
+      <LoadingScreen text={isRTL ? "טוען בינה מלכותית..." : "Loading AI..."} />
     );
   }
 
+  if (error && retryCount > 2) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => {
+            setRetryCount(0);
+            setError(null);
+            loadUserProfile();
+            loadChatHistory();
+          }}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   return (
+    <ErrorBoundary>
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -613,6 +644,7 @@ export default function AIChatScreen() {
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </ErrorBoundary>
   );
 }
 
@@ -924,5 +956,29 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: "center",
     alignItems: "center",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+    backgroundColor: "#F8F9FA",
+  },
+  errorText: {
+    fontSize: 16,
+    color: "#E74C3C",
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#16A085",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

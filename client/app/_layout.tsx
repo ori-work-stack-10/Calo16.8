@@ -31,6 +31,8 @@ import { I18nManager } from "react-native";
 import { useOptimizedAuthSelector } from "@/hooks/useOptimizedSelector";
 import { ErrorHandler } from "@/src/utils/errorHandler";
 import { useTranslation } from "react-i18next";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 // Enable RTL support globally
 if (Platform.OS !== "web") {
@@ -164,8 +166,7 @@ function useNavigationManager(
 
 const LoadingScreen = React.memo(() => (
   <View style={styles.loadingContainer}>
-    <ActivityIndicator size="large" color="#10b981" />
-    <Text style={styles.loadingText}>Loading...</Text>
+    <LoadingSpinner text="Loading..." />
   </View>
 ));
 
@@ -318,24 +319,28 @@ const MainApp = React.memo(() => {
 
 export default function RootLayout() {
   return (
-    <I18nextProvider i18n={i18n}>
-      <GestureHandlerRootView style={styles.root}>
-        <SafeAreaProvider>
-          <Provider store={store}>
-            <QueryClientProvider client={queryClient}>
-              <PersistGate loading={<LoadingScreen />} persistor={persistor}>
-                <ThemeProvider>
-                  <LanguageProvider>
-                    <MainApp />
-                    <StatusBar style="auto" />
-                  </LanguageProvider>
-                </ThemeProvider>
-              </PersistGate>
-            </QueryClientProvider>
-          </Provider>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </I18nextProvider>
+    <ErrorBoundary>
+      <I18nextProvider i18n={i18n}>
+        <GestureHandlerRootView style={styles.root}>
+          <SafeAreaProvider>
+            <Provider store={store}>
+              <QueryClientProvider client={queryClient}>
+                <PersistGate loading={<LoadingScreen />} persistor={persistor}>
+                  <ThemeProvider>
+                    <LanguageProvider>
+                      <ErrorBoundary>
+                        <MainApp />
+                      </ErrorBoundary>
+                      <StatusBar style="auto" />
+                    </LanguageProvider>
+                  </ThemeProvider>
+                </PersistGate>
+              </QueryClientProvider>
+            </Provider>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </I18nextProvider>
+    </ErrorBoundary>
   );
 }
 
